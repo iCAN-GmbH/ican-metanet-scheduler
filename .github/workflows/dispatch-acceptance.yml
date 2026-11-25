@@ -1,0 +1,54 @@
+name: Dispatch acceptance check
+
+on:
+  schedule:
+    - cron: '4,19,34,49 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: acceptance-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.repository == 'iCAN-GmbH/ican-metanet-scheduler' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: acceptance-dispatch
+    timeout-minutes: 5
+    steps:
+      - name: Check scheduler configuration
+        id: configuration
+        env:
+          CLIENT_ID: ${{ vars.DISPATCH_APP_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.DISPATCH_APP_PRIVATE_KEY }}
+          TARGET_REPOSITORY: ${{ secrets.DISPATCH_TARGET_REPOSITORY }}
+        run: |
+          if [[ -n "$CLIENT_ID" && -n "$PRIVATE_KEY" && -n "$TARGET_REPOSITORY" ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Waiting for the scheduler GitHub App configuration.'
+          fi
+
+      - name: Create a token scoped to the dispatch target
+        if: steps.configuration.outputs.ready == 'true'
+        id: access
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DISPATCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ secrets.DISPATCH_TARGET_REPOSITORY }}
+          permission-contents: write
+
+      - name: Dispatch the acceptance workflow
+        if: steps.configuration.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.access.outputs.token }}
+          TARGET_REPOSITORY: ${{ secrets.DISPATCH_TARGET_REPOSITORY }}
+        run: |
+          gh api --silent --method POST \
+            "repos/$GITHUB_REPOSITORY_OWNER/$TARGET_REPOSITORY/dispatches" \
+            -f event_type=metanet-acceptance-check
+          echo 'GitHub accepted the acceptance dispatch.'
